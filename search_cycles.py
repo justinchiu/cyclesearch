@@ -142,8 +142,8 @@ def sample_sequence(
             filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
             next_token = torch.multinomial(filtered_logits.softmax(-1), num_samples=1)
             generated = torch.cat((generated, next_token.unsqueeze(0)), dim=1)
-            if generated.shape[-1] > 10:
-                # only run if more than 10 total tokens generated
+            if generated.shape[-1] > 20:
+                # only run if more than 20 total tokens generated
                 has |= has_repeats(generated)
     return generated, has
 
