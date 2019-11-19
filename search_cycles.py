@@ -23,6 +23,9 @@ import logging
 import pickle
 from tqdm import trange, tqdm
 
+from nltk.util import ngrams
+from collections import Counter
+
 import torch
 import numpy as np
 
@@ -102,6 +105,13 @@ def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')
         logits[indices_to_remove] = filter_value
     return logits
 
+def has_repeats(tensor, n_min=2, n_max=5):
+    N = tensor.shape[0]
+    has = torch.BoolTensor([False] * N).to(tensor.device)
+    for n in range(n_min, n_max+1):
+        has |= ((tensor[:, -n:] == tensor[:, -2*n:-n]).all(-1)
+            and (tensor[:, -2*n:-n] == tensor[:, -3*n:-2*n]).all(-1))
+    return has
 
 def sample_sequence(
     model, length, context,
@@ -110,6 +120,7 @@ def sample_sequence(
 ):
     context = torch.tensor(context, dtype=torch.long, device=device)
     context = context.unsqueeze(0).repeat(num_samples, 1)
+    has = torch.BoolTensor([False] * num_samples).to(device)
     generated = context
     with torch.no_grad():
         #for _ in trange(length):
@@ -131,7 +142,10 @@ def sample_sequence(
             filtered_logits = top_k_top_p_filtering(next_token_logits, top_k=top_k, top_p=top_p)
             next_token = torch.multinomial(filtered_logits.softmax(-1), num_samples=1)
             generated = torch.cat((generated, next_token.unsqueeze(0)), dim=1)
-    return generated
+            if generated.shape[-1] > 10:
+                # only run if more than 10 total tokens generated
+                has |= has_repeats(generated)
+    return generated, has
 
 
 def main():
@@ -183,7 +197,7 @@ def main():
             # Models with memory likes to have a long prompt for short inputs.
             raw_text = (args.padding_text if args.padding_text else PADDING_TEXT) + raw_text
         context_tokens = tokenizer.encode(raw_text)
-        out = sample_sequence(
+        out, has = sample_sequence(
             model=model,
             context=context_tokens,
             length=args.length,
@@ -193,10 +207,11 @@ def main():
             device=args.device,
             is_xlnet=bool(args.model_type == "xlnet"),
         )
-        out = out[0, len(context_tokens):].tolist()
-        text = tokenizer.decode(out, clean_up_tokenization_spaces=True)
-        if raw_text == text[:len(raw_text)]:
-            print(raw_text, count, text)
+        if has:
+            out = out[0, len(context_tokens):].tolist()
+            text = tokenizer.decode(out, clean_up_tokenization_spaces=True)
+            print("Found repeats")
+            print(raw_text, " || ", text)
 
 
 if __name__ == '__main__':
